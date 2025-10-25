@@ -24,7 +24,26 @@ from flask import (
     abort,
     jsonify,
 )
-from supabase_storage_client import supabase_storage
+# from supabase_storage_client import supabase_storage  # Disabled for basic version
+
+# Basic storage fallback for basic version
+class BasicStorage:
+    def health_check(self):
+        return {"enabled": False, "connected": False, "timestamp": None}
+    
+    def is_enabled(self):
+        return False
+    
+    def list_files(self, bucket, path):
+        return []
+    
+    def upload_file(self, bucket, path, data, content_type=None):
+        return False
+    
+    def get_signed_url(self, bucket, path):
+        return None
+
+supabase_storage = BasicStorage()
 
 # ----------------------
 # App & logging
