@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-web_app_basic.py - Basic version without Supabase client dependency
+web_app_simple.py - Simplified version without direct psycopg2 dependency
 """
 
 import os
@@ -24,6 +24,7 @@ from flask import (
     abort,
     jsonify,
 )
+from supabase import create_client, Client
 
 # ----------------------
 # App & logging
@@ -36,7 +37,19 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s - %(message)s",
 )
 logger = logging.getLogger("fintech_web_app")
-logger.info("Basic web app starting")
+logger.info("Simplified web app starting")
+
+# ----------------------
+# Supabase client
+# ----------------------
+supabase_url = os.environ.get("SUPABASE_URL")
+supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
+
+if not supabase_url or not supabase_key:
+    logger.error("Missing SUPABASE_URL or SUPABASE_SERVICE_KEY environment variables")
+    raise ValueError("Supabase configuration required")
+
+supabase: Client = create_client(supabase_url, supabase_key)
 
 # ----------------------
 # HTML template
@@ -126,7 +139,11 @@ INDEX_HTML = """
         <!-- Health Check -->
         <div style="margin-top: 40px; padding: 20px; background: #f8f9fa; border-radius: 5px;">
             <h4>System Health</h4>
-            <p><strong>Status:</strong> <span style="color: green;">Running</span></p>
+            <p><strong>Storage:</strong> 
+                <span style="color: {{ 'green' if health.storage else 'red' }}">
+                    {{ 'Connected' if health.storage else 'Disconnected' }}
+                </span>
+            </p>
             <p><strong>Last Check:</strong> {{ health.timestamp }}</p>
         </div>
     </div>
@@ -147,8 +164,17 @@ INDEX_HTML = """
 @app.route("/health", methods=["GET"])
 def health():
     """Health check endpoint"""
+    try:
+        # Test storage connection
+        supabase.storage.from_("uploads").list()
+        storage_status = True
+    except Exception as e:
+        logger.error(f"Storage health check failed: {e}")
+        storage_status = False
+    
     health_status = {
-        "status": "ok",
+        "database": True,  # Assume true for simplified version
+        "storage": storage_status,
         "timestamp": datetime.utcnow().isoformat()
     }
     return jsonify(health_status), 200
@@ -158,46 +184,35 @@ def health():
 def index():
     """Main page"""
     try:
-        # Get recent jobs from local filesystem
+        # Get recent jobs from storage (simplified approach)
         recent_jobs = []
         
-        # Check for existing output directories
-        output_dir = Path("outputs")
-        if output_dir.exists():
-            for job_dir in output_dir.iterdir():
-                if job_dir.is_dir():
-                    job_id = job_dir.name
-                    # Check if processing is complete
-                    dashboard_file = job_dir / "dashboard.html"
-                    ct_file = job_dir / "CT_Analysis_Output.csv"
-                    tus_file = job_dir / "TUS_Analysis_Output.csv"
-                    
-                    if dashboard_file.exists() and ct_file.exists() and tus_file.exists():
-                        status = "done"
-                        outputs = [
-                            {"output_id": f"{job_id}_ct", "file_type": "CT"},
-                            {"output_id": f"{job_id}_tus", "file_type": "TUS"},
-                            {"output_id": f"{job_id}_dashboard", "file_type": "dashboard"}
-                        ]
-                    else:
-                        status = "running"
-                        outputs = []
-                    
+        # Try to list files in outputs bucket to show recent activity
+        try:
+            output_files = supabase.storage.from_("outputs").list()
+            # Create mock job entries based on files found
+            for file_info in output_files[:10]:  # Limit to 10 most recent
+                if file_info.get('name', '').endswith('.html'):
+                    job_id = file_info['name'].split('/')[0] if '/' in file_info['name'] else 'unknown'
                     recent_jobs.append({
                         'job_id': job_id,
-                        'status': status,
+                        'status': 'done',
                         'original_filename': 'processed_file.csv',
-                        'uploaded_at': datetime.fromtimestamp(job_dir.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
+                        'uploaded_at': file_info.get('created_at', 'Unknown'),
                         'error_msg': None,
-                        'outputs': outputs
+                        'outputs': [
+                            {
+                                'output_id': f"{job_id}_dashboard",
+                                'file_type': 'dashboard'
+                            }
+                        ]
                     })
-        
-        # Sort by upload time (most recent first)
-        recent_jobs.sort(key=lambda x: x['uploaded_at'], reverse=True)
-        recent_jobs = recent_jobs[:10]  # Limit to 10 most recent
+        except Exception as e:
+            logger.error(f"Error listing output files: {e}")
         
         # Get system health
         health_status = {
+            "storage": True,
             "timestamp": datetime.utcnow().isoformat()
         }
         
@@ -256,6 +271,16 @@ def upload():
         
         logger.info(f"File saved to {saved_path}")
         
+        # Compute file hash
+        file_hash = compute_file_hash(saved_path)
+        
+        # Upload to Supabase Storage
+        storage_path = f"uploads/{file_hash}.{Path(fname).suffix[1:]}"
+        with open(saved_path, 'rb') as f:
+            file_data = f.read()
+        
+        supabase.storage.from_("uploads").upload(storage_path, file_data)
+        
         # Create job ID
         job_id = uuid.uuid4().hex[:8]
         
@@ -269,7 +294,7 @@ def upload():
                 # Run preprocessing
                 logger.info(f"Running preprocessing for {saved_path}")
                 preproc = subprocess.run(
-                    ["python3", "preprocess_upload.py", saved_path], 
+                    ["python3", "preprocess_upload.py", saved_path, file_hash], 
                     cwd=".", 
                     capture_output=True, 
                     text=True, 
@@ -322,6 +347,17 @@ def upload():
                     logger.error(f"Dashboard generation failed: {proc2.stderr}")
                     return
                 
+                # Upload outputs to storage
+                for filename in os.listdir(output_dir):
+                    file_path = os.path.join(output_dir, filename)
+                    if os.path.isfile(file_path):
+                        storage_output_path = f"outputs/{job_id}/{filename}"
+                        with open(file_path, 'rb') as f:
+                            output_data = f.read()
+                        
+                        supabase.storage.from_("outputs").upload(storage_output_path, output_data)
+                        logger.info(f"Uploaded {filename} for job {job_id}")
+                
                 logger.info(f"Job {job_id} completed successfully")
                 
             except Exception as e:
@@ -344,25 +380,26 @@ def upload():
 def download_output(output_id):
     """Download output file"""
     try:
-        # Extract job_id and file type from output_id
+        # Extract job_id from output_id (simplified approach)
         job_id = output_id.split('_')[0]
-        file_type = output_id.split('_')[1] if '_' in output_id else 'dashboard'
         
-        # Map file types to actual filenames
-        file_mapping = {
-            'ct': 'CT_Analysis_Output.csv',
-            'tus': 'TUS_Analysis_Output.csv',
-            'dashboard': 'dashboard.html',
-            'audit': 'audit_lineage.csv'
-        }
+        # Try to find the file in storage
+        try:
+            files = supabase.storage.from_("outputs").list(f"outputs/{job_id}")
+            for file_info in files:
+                if file_info.get('name', '').endswith(('.csv', '.html')):
+                    file_path = f"outputs/{job_id}/{file_info['name']}"
+                    signed_url = supabase.storage.from_("outputs").create_signed_url(file_path, 3600)
+                    
+                    if signed_url.get("error"):
+                        raise Exception(f"Signed URL generation failed: {signed_url['error']}")
+                    
+                    logger.info(f"Generated download URL for {output_id}")
+                    return redirect(signed_url["signedURL"])
+        except Exception as e:
+            logger.error(f"Download failed for {output_id}: {e}")
         
-        filename = file_mapping.get(file_type, 'dashboard.html')
-        file_path = Path("outputs") / job_id / filename
-        
-        if file_path.exists():
-            return send_from_directory(file_path.parent, file_path.name, as_attachment=True)
-        else:
-            abort(404)
+        abort(404)
         
     except Exception as e:
         logger.error(f"Download failed for {output_id}: {e}")
@@ -375,12 +412,24 @@ def view_dashboard(output_id):
     try:
         # Extract job_id from output_id
         job_id = output_id.split('_')[0]
-        file_path = Path("outputs") / job_id / "dashboard.html"
         
-        if file_path.exists():
-            return send_from_directory(file_path.parent, file_path.name)
-        else:
-            abort(404)
+        # Try to find dashboard file
+        try:
+            files = supabase.storage.from_("outputs").list(f"outputs/{job_id}")
+            for file_info in files:
+                if file_info.get('name', '').endswith('.html'):
+                    file_path = f"outputs/{job_id}/{file_info['name']}"
+                    signed_url = supabase.storage.from_("outputs").create_signed_url(file_path, 3600)
+                    
+                    if signed_url.get("error"):
+                        raise Exception(f"Signed URL generation failed: {signed_url['error']}")
+                    
+                    logger.info(f"Generated view URL for dashboard {output_id}")
+                    return redirect(signed_url["signedURL"])
+        except Exception as e:
+            logger.error(f"View failed for {output_id}: {e}")
+        
+        abort(404)
         
     except Exception as e:
         logger.error(f"View failed for {output_id}: {e}")
