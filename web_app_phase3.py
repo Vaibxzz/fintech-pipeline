@@ -708,35 +708,25 @@ def upload():
             except Exception as e:
                 logger.error(f"Cloud upload failed: {e}")
         
-        # Phase 3: Create job with advanced job manager
-        if advanced_job_manager.is_enabled():
-            job_id = advanced_job_manager.create_job(
-                file_path=saved_path,
-                file_hash=file_hash or "unknown",
-                original_filename=fname,
-                dataset_type=detected_dataset_type,
-                callback=_process_file_callback
-            )
-        else:
-            # Fallback to simple job creation
-            job_id = uuid.uuid4().hex[:8]
-            if supabase_rest.is_enabled():
-                try:
-                    job = supabase_rest.create_job(file_hash or "unknown", fname, detected_dataset_type)
-                    if job:
-                        job_id = job["job_id"]
-                except Exception as e:
-                    logger.error(f"Database job creation failed: {e}")
+        # Create job ID
+        job_id = uuid.uuid4().hex[:8]
+        
+        # Record in database if enabled
+        if supabase_rest.is_enabled():
+            try:
+                job = supabase_rest.create_job(file_hash or "unknown", fname, detected_dataset_type)
+                if job:
+                    job_id = job["job_id"]
+            except Exception as e:
+                logger.error(f"Database job creation failed: {e}")
         
         # Record file upload
         if file_hasher.is_enabled() and file_hash:
             file_hasher.record_file_upload(file_hash, fname)
         
-        # Start processing
-        if not advanced_job_manager.is_enabled():
-            # Fallback to simple processing
-            thread = threading.Thread(target=_process_file_simple, args=(job_id, saved_path), daemon=True)
-            thread.start()
+        # Start processing in background
+        thread = threading.Thread(target=_process_file_simple, args=(job_id, saved_path), daemon=True)
+        thread.start()
         
         cloud_status = " (cloud storage enabled)" if cloud_uploaded else ""
         db_status = " (database tracking enabled)" if supabase_rest.is_enabled() else ""

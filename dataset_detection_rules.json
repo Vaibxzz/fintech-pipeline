@@ -1,61 +1,52 @@
 {
-  "required_columns": {
-    "strict": ["Station_ID", "Date_Time", "PCode", "Result"],
-    "flexible": ["station", "date", "time", "pcode", "result", "value"]
-  },
-  "column_patterns": {
-    "date_columns": [
-      "date", "time", "timestamp", "datetime", "recorded", "created", "updated"
-    ],
-    "station_columns": [
-      "station", "id", "branch", "location", "sensor", "site", "node"
-    ],
-    "result_columns": [
-      "value", "amount", "result", "reading", "score", "price", "metric", "measurement"
-    ],
-    "pcode_columns": [
-      "pcode", "parameter", "param", "type", "category", "metric_type"
-    ]
-  },
-  "confidence_thresholds": {
-    "high": 0.9,
-    "medium": 0.7,
-    "low": 0.5
-  },
-  "detection_strategies": [
-    {
-      "name": "strict_match",
-      "weight": 1.0,
-      "description": "Exact column name matching"
-    },
-    {
-      "name": "pattern_match",
-      "weight": 0.8,
-      "description": "Pattern-based column matching"
-    },
-    {
-      "name": "data_type_analysis",
-      "weight": 0.6,
-      "description": "Data type and content analysis"
-    },
-    {
-      "name": "heuristic_analysis",
+  "strategies": {
+    "column_analysis": {
       "weight": 0.4,
-      "description": "Heuristic-based detection"
-    }
-  ],
-  "fallback_options": [
-    {
-      "type": "raw_data",
-      "description": "Raw sensor data format"
+      "description": "Analyze column names and data types"
     },
-    {
-      "type": "financial_data",
-      "description": "Financial transaction data"
+    "data_patterns": {
+      "weight": 0.3,
+      "description": "Look for specific data patterns"
     },
-    {
-      "type": "custom",
-      "description": "Custom format (user will specify)"
+    "file_metadata": {
+      "weight": 0.2,
+      "description": "Analyze file name and structure"
+    },
+    "content_analysis": {
+      "weight": 0.1,
+      "description": "Analyze actual data content"
     }
-  ]
+  },
+  "dataset_types": {
+    "raw_data": {
+      "required_columns": ["Station_ID", "Date_Time", "PCode", "Result"],
+      "optional_columns": ["Quality_Flag", "Unit", "Method"],
+      "data_patterns": {
+        "date_format": "YYYY-MM-DD HH:MM:SS",
+        "numeric_result": true,
+        "station_id_format": "alphanumeric"
+      },
+      "confidence_threshold": 0.7
+    },
+    "ct_analysis": {
+      "required_columns": ["Station", "Dates"],
+      "optional_columns": ["Data 1", "Data 2", "Data 3"],
+      "data_patterns": {
+        "station_value": "CT",
+        "date_format": "YYYY-MM-DD",
+        "multiple_data_columns": true
+      },
+      "confidence_threshold": 0.8
+    },
+    "tus_analysis": {
+      "required_columns": ["Station", "Dates"],
+      "optional_columns": ["Data 1", "Data 2", "Data 3"],
+      "data_patterns": {
+        "station_value": "TUS",
+        "date_format": "YYYY-MM-DD",
+        "multiple_data_columns": true
+      },
+      "confidence_threshold": 0.8
+    }
+  }
 }
