@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: fintech-pipeline-phase3
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements_phase3.txt
+    startCommand: gunicorn web_app_phase3:app
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENABLE_SUPABASE_STORAGE
+        value: "true"
+      - key: ENABLE_DATABASE_TRACKING
+        value: "true"
+      - key: ENABLE_DUPLICATE_DETECTION
+        value: "true"
+      - key: ENABLE_DATASET_DETECTION
+        value: "true"
+      - key: ENABLE_ADVANCED_JOBS
+        value: "true"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
