@@ -1,0 +1,31 @@
+# Render deployment configuration
+services:
+  - type: web
+    name: fintech-pipeline
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python web_app.py
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PORT
+        value: 10000
+      - key: UPLOAD_FOLDER
+        value: uploads
+      - key: OUTPUT_FOLDER
+        value: outputs
+      - key: MAX_FILE_SIZE
+        value: 50
+      - key: LOG_LEVEL
+        value: INFO
+    healthCheckPath: /health
+    autoDeploy: false

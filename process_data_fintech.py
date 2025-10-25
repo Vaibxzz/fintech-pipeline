@@ -75,20 +75,51 @@ def write_audit_log(raw_df: pd.DataFrame, out_dir: str) -> None:
         rows.append({"index": int(idx), "station_id": row.get('Station_ID'), "date_time": row.get('Date_Time'), "pcode": row.get('PCode'), "result": row.get('Result'), "row_hash": compute_row_hash(row), "processed_at": datetime.utcnow().isoformat() + 'Z'})
     pd.DataFrame(rows).to_csv(path, index=False)
 def main(args):
-    out_dir = Path(args.out_dir or os.environ.get('OUT_DIR') or DEFAULT_OUT_DIR); out_dir.mkdir(parents=True, exist_ok=True)
-    raw = read_any_table(args.raw); raw = normalize(raw)
-    try: validated = raw
-    except Exception as e: validated = raw
+    # Create job-specific output directory
+    if args.job_id:
+        out_dir = Path(args.out_dir or os.environ.get('OUT_DIR') or DEFAULT_OUT_DIR) / args.job_id
+    else:
+        out_dir = Path(args.out_dir or os.environ.get('OUT_DIR') or DEFAULT_OUT_DIR)
+    
+    out_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Read and validate data
+    raw = read_any_table(args.raw)
+    raw = normalize(raw)
+    try: 
+        validated = raw
+    except Exception as e: 
+        validated = raw
+    
+    # Write audit log
     write_audit_log(validated, str(out_dir))
+    
+    # Read templates if provided
     ct_template = read_any_table(args.ct_template) if args.ct_template else None
     tus_template = read_any_table(args.tus_template) if args.tus_template else None
+    
+    # Get column names for templates
     ct_cols = [c for c in ct_template.columns.astype(str) if c not in ('Station','Dates')] if ct_template is not None else None
     tus_cols = [c for c in tus_template.columns.astype(str) if c not in ('Station','Dates')] if tus_template is not None else None
+    
+    # Process data for CT and TUS stations
     ct_out = pivot_station(validated, 'CT', template_cols=ct_cols, agg=args.agg)
     tus_out = pivot_station(validated, 'TUS', template_cols=tus_cols, agg=args.agg)
-    for df in (ct_out, tus_out): df['generated_at'] = datetime.utcnow().isoformat() + 'Z'; df['pipeline_version'] = args.version or '0.1.0'
-    ct_path = out_dir / (args.ct_out or 'CT_Analysis_Output.csv'); tus_path = out_dir / (args.tus_out or 'TUS_Analysis_Output.csv')
-    write_csv_secure(ct_out, str(ct_path)); write_csv_secure(tus_out, str(tus_path))
+    
+    # Add metadata
+    for df in (ct_out, tus_out): 
+        df['generated_at'] = datetime.utcnow().isoformat() + 'Z'
+        df['pipeline_version'] = args.version or '0.1.0'
+        df['job_id'] = args.job_id or 'unknown'
+    
+    # Write output files
+    ct_path = out_dir / (args.ct_out or 'CT_Analysis_Output.csv')
+    tus_path = out_dir / (args.tus_out or 'TUS_Analysis_Output.csv')
+    
+    write_csv_secure(ct_out, str(ct_path))
+    write_csv_secure(tus_out, str(tus_path))
+    
+    logger.info(f"Processing complete for job {args.job_id or 'unknown'}")
     print('Processing complete')
 if __name__ == '__main__':
     import argparse
@@ -101,5 +132,6 @@ if __name__ == '__main__':
     parser.add_argument('--tus_out')
     parser.add_argument('--agg', default='mean')
     parser.add_argument('--version')
+    parser.add_argument('--job_id', help='Job ID for tracking')
     args = parser.parse_args()
     main(args)
