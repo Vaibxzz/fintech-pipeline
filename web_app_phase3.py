@@ -25,11 +25,106 @@ from flask import (
     abort,
     jsonify,
 )
-from supabase_storage_client import supabase_storage
-from supabase_rest_client import supabase_rest
-from file_hasher import file_hasher
-from dataset_detector_advanced import dataset_detector
-from job_manager_advanced import advanced_job_manager
+# Import with fallback for deployment compatibility
+try:
+    from supabase_storage_client import supabase_storage
+except ImportError:
+    # Fallback for deployment without supabase
+    class BasicStorage:
+        def health_check(self):
+            return {"enabled": False, "connected": False, "timestamp": None}
+        def is_enabled(self):
+            return False
+        def list_files(self, bucket, path):
+            return []
+        def upload_file(self, bucket, path, data, content_type=None):
+            return False
+        def get_signed_url(self, bucket, path):
+            return None
+        def download_file(self, bucket, path):
+            return None
+    supabase_storage = BasicStorage()
+
+try:
+    from supabase_rest_client import supabase_rest
+except ImportError:
+    # Fallback for deployment without supabase
+    class BasicRest:
+        def health_check(self):
+            return {"enabled": False, "connected": False, "timestamp": None}
+        def is_enabled(self):
+            return False
+        def get_job(self, job_id):
+            return None
+        def create_job(self, file_hash, original_filename, dataset_type=None):
+            return None
+        def update_job_status(self, job_id, status, error_msg=None):
+            return False
+        def get_outputs_by_job(self, job_id):
+            return []
+        def create_output(self, job_id, file_type, storage_path, file_size=None):
+            return None
+        def get_upload_file(self, file_hash):
+            return None
+        def create_or_update_upload_file(self, file_hash, original_name, normalized_path=None):
+            return None
+        def get_recent_jobs_for_file(self, file_hash, limit=5):
+            return []
+    supabase_rest = BasicRest()
+
+try:
+    from file_hasher import file_hasher
+except ImportError:
+    # Fallback for deployment without file hasher
+    class BasicHasher:
+        def is_enabled(self):
+            return False
+        def compute_file_hash(self, file_path):
+            return "fallback_hash"
+        def check_duplicate_file(self, file_hash):
+            return False, None
+        def get_file_statistics(self, file_hash):
+            return {"is_duplicate": False, "confidence": "disabled"}
+        def generate_duplicate_report(self, file_hash):
+            return "Duplicate detection disabled"
+        def record_file_upload(self, file_hash, original_name, normalized_path=None):
+            return None
+    file_hasher = BasicHasher()
+
+try:
+    from dataset_detector_advanced import dataset_detector
+except ImportError:
+    # Fallback for deployment without dataset detector
+    class BasicDetector:
+        def is_enabled(self):
+            return False
+        def detect_dataset_type(self, file_path):
+            return {
+                "detected_type": "unknown",
+                "confidence": 0.0,
+                "reasoning": "Dataset detection disabled",
+                "recommendations": ["Manual selection required"]
+            }
+    dataset_detector = BasicDetector()
+
+try:
+    from job_manager_advanced import advanced_job_manager
+except ImportError:
+    # Fallback for deployment without advanced job manager
+    class BasicJobManager:
+        def is_enabled(self):
+            return False
+        def create_job(self, file_path, file_hash, original_filename, dataset_type=None, callback=None):
+            return "fallback_job_id"
+        def get_job_status(self, job_id):
+            return None
+        def cancel_job(self, job_id):
+            return False
+        def get_queue_status(self):
+            return {"enabled": False, "queued_jobs": 0, "running_jobs": 0}
+        def get_recent_jobs(self, limit=10):
+            return []
+    advanced_job_manager = BasicJobManager()
 
 # ----------------------
 # App & logging
