@@ -4,43 +4,71 @@ import plotly.io as pio
 import argparse
 import logging
 from pathlib import Path
-from database_models import JobRepository, OutputRepository
-from storage_manager import storage_manager
+from supabase_rest_client import supabase_rest
+from supabase_storage_client import supabase_storage
 
 logger = logging.getLogger(__name__)
 
 def generate_dashboard_for_job(job_id: str):
     """Generate dashboard for a specific job"""
     try:
-        # Get job information
-        job = JobRepository.get_job(job_id)
-        if not job:
-            raise ValueError(f"Job {job_id} not found")
+        # Try to get job information from database first
+        job = None
+        outputs = []
         
-        # Get job outputs
-        outputs = OutputRepository.get_outputs_by_job(job_id)
+        if supabase_rest.is_enabled():
+            try:
+                job = supabase_rest.get_job(job_id)
+                outputs = supabase_rest.get_outputs_by_job(job_id)
+            except Exception as e:
+                logger.warning(f"Database lookup failed for job {job_id}: {e}")
         
         # Find CT and TUS analysis files
         ct_output = None
         tus_output = None
         
         for output in outputs:
-            if output.file_type == 'CT':
+            if output.get('file_type') == 'CT':
                 ct_output = output
-            elif output.file_type == 'TUS':
+            elif output.get('file_type') == 'TUS':
                 tus_output = output
         
+        # If database lookup failed, try filesystem fallback
         if not ct_output or not tus_output:
-            raise ValueError(f"Missing CT or TUS analysis files for job {job_id}")
-        
-        # Download files from storage
-        ct_data = storage_manager.download_file("outputs", ct_output.storage_path)
-        tus_data = storage_manager.download_file("outputs", tus_output.storage_path)
-        
-        # Read CSV data
-        import io
-        ct = pd.read_csv(io.StringIO(ct_data.decode('utf-8')))
-        tus = pd.read_csv(io.StringIO(tus_data.decode('utf-8')))
+            logger.info(f"Database outputs not found, trying filesystem fallback for job {job_id}")
+            ct_path = Path(f"outputs/{job_id}/CT_Analysis_Output.csv")
+            tus_path = Path(f"outputs/{job_id}/TUS_Analysis_Output.csv")
+            
+            if ct_path.exists() and tus_path.exists():
+                # Read directly from filesystem
+                ct = pd.read_csv(ct_path)
+                tus = pd.read_csv(tus_path)
+            else:
+                raise ValueError(f"Missing CT or TUS analysis files for job {job_id}")
+        else:
+            # Download files from storage
+            if supabase_storage.is_enabled():
+                try:
+                    ct_data = supabase_storage.download_file("outputs", ct_output['storage_path'])
+                    tus_data = supabase_storage.download_file("outputs", tus_output['storage_path'])
+                    
+                    # Read CSV data
+                    import io
+                    ct = pd.read_csv(io.StringIO(ct_data.decode('utf-8')))
+                    tus = pd.read_csv(io.StringIO(tus_data.decode('utf-8')))
+                except Exception as e:
+                    logger.warning(f"Storage download failed, trying filesystem: {e}")
+                    # Fall back to filesystem
+                    ct_path = Path(f"outputs/{job_id}/CT_Analysis_Output.csv")
+                    tus_path = Path(f"outputs/{job_id}/TUS_Analysis_Output.csv")
+                    ct = pd.read_csv(ct_path)
+                    tus = pd.read_csv(tus_path)
+            else:
+                # Use filesystem directly
+                ct_path = Path(f"outputs/{job_id}/CT_Analysis_Output.csv")
+                tus_path = Path(f"outputs/{job_id}/TUS_Analysis_Output.csv")
+                ct = pd.read_csv(ct_path)
+                tus = pd.read_csv(tus_path)
         
         # Prepare data for visualization
         ct_melt = prepare_data(ct, "CT")
@@ -54,12 +82,27 @@ def generate_dashboard_for_job(job_id: str):
         # Generate HTML
         html_content = pio.to_html(fig, full_html=True, include_plotlyjs="cdn")
         
-        # Upload dashboard to storage
+        # Save to local filesystem first
         dashboard_path = f"outputs/{job_id}/dashboard.html"
-        storage_manager.upload_file("outputs", dashboard_path, html_content.encode('utf-8'), "text/html")
+        local_path = Path(dashboard_path)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        local_path.write_text(html_content, encoding='utf-8')
         
-        # Record dashboard output in database
-        OutputRepository.create_output(job_id, "dashboard", dashboard_path, len(html_content))
+        # Upload dashboard to storage if enabled
+        if supabase_storage.is_enabled():
+            try:
+                supabase_storage.upload_file("outputs", dashboard_path, html_content.encode('utf-8'), "text/html")
+                logger.info(f"Dashboard uploaded to cloud storage: {dashboard_path}")
+            except Exception as e:
+                logger.warning(f"Cloud upload failed: {e}")
+        
+        # Record dashboard output in database if enabled
+        if supabase_rest.is_enabled():
+            try:
+                supabase_rest.create_output(job_id, "dashboard", dashboard_path, len(html_content))
+                logger.info(f"Dashboard recorded in database: {dashboard_path}")
+            except Exception as e:
+                logger.warning(f"Database recording failed: {e}")
         
         logger.info(f"Dashboard generated for job {job_id}")
         print(f"✅ Dashboard generated for job {job_id}")
