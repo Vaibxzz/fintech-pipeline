@@ -36,15 +36,33 @@ def generate_dashboard_for_job(job_id: str):
         # If database lookup failed, try filesystem fallback
         if not ct_output or not tus_output:
             logger.info(f"Database outputs not found, trying filesystem fallback for job {job_id}")
-            ct_path = Path(f"outputs/{job_id}/CT_Analysis_Output.csv")
-            tus_path = Path(f"outputs/{job_id}/TUS_Analysis_Output.csv")
             
-            if ct_path.exists() and tus_path.exists():
+            # Try different possible paths
+            possible_paths = [
+                f"outputs/{job_id}/CT_Analysis_Output.csv",
+                f"outputs/test_pipeline/{job_id}/CT_Analysis_Output.csv",
+                f"outputs/CT_Analysis_Output.csv"  # fallback to root outputs
+            ]
+            
+            ct_path = None
+            tus_path = None
+            
+            for base_path in possible_paths:
+                ct_candidate = Path(base_path)
+                tus_candidate = Path(base_path.replace("CT_Analysis_Output.csv", "TUS_Analysis_Output.csv"))
+                
+                if ct_candidate.exists() and tus_candidate.exists():
+                    ct_path = ct_candidate
+                    tus_path = tus_candidate
+                    logger.info(f"Found files at: {ct_path.parent}")
+                    break
+            
+            if ct_path and tus_path:
                 # Read directly from filesystem
                 ct = pd.read_csv(ct_path)
                 tus = pd.read_csv(tus_path)
             else:
-                raise ValueError(f"Missing CT or TUS analysis files for job {job_id}")
+                raise ValueError(f"Missing CT or TUS analysis files for job {job_id}. Checked paths: {possible_paths}")
         else:
             # Download files from storage
             if supabase_storage.is_enabled():
@@ -58,17 +76,55 @@ def generate_dashboard_for_job(job_id: str):
                     tus = pd.read_csv(io.StringIO(tus_data.decode('utf-8')))
                 except Exception as e:
                     logger.warning(f"Storage download failed, trying filesystem: {e}")
-                    # Fall back to filesystem
-                    ct_path = Path(f"outputs/{job_id}/CT_Analysis_Output.csv")
-                    tus_path = Path(f"outputs/{job_id}/TUS_Analysis_Output.csv")
+                    # Fall back to filesystem with multiple path options
+                    possible_paths = [
+                        f"outputs/{job_id}/CT_Analysis_Output.csv",
+                        f"outputs/test_pipeline/{job_id}/CT_Analysis_Output.csv",
+                        f"outputs/CT_Analysis_Output.csv"
+                    ]
+                    
+                    ct_path = None
+                    tus_path = None
+                    
+                    for base_path in possible_paths:
+                        ct_candidate = Path(base_path)
+                        tus_candidate = Path(base_path.replace("CT_Analysis_Output.csv", "TUS_Analysis_Output.csv"))
+                        
+                        if ct_candidate.exists() and tus_candidate.exists():
+                            ct_path = ct_candidate
+                            tus_path = tus_candidate
+                            break
+                    
+                    if ct_path and tus_path:
+                        ct = pd.read_csv(ct_path)
+                        tus = pd.read_csv(tus_path)
+                    else:
+                        raise ValueError(f"Could not find CT/TUS files in any expected location")
+            else:
+                # Use filesystem directly with multiple path options
+                possible_paths = [
+                    f"outputs/{job_id}/CT_Analysis_Output.csv",
+                    f"outputs/test_pipeline/{job_id}/CT_Analysis_Output.csv",
+                    f"outputs/CT_Analysis_Output.csv"
+                ]
+                
+                ct_path = None
+                tus_path = None
+                
+                for base_path in possible_paths:
+                    ct_candidate = Path(base_path)
+                    tus_candidate = Path(base_path.replace("CT_Analysis_Output.csv", "TUS_Analysis_Output.csv"))
+                    
+                    if ct_candidate.exists() and tus_candidate.exists():
+                        ct_path = ct_candidate
+                        tus_path = tus_candidate
+                        break
+                
+                if ct_path and tus_path:
                     ct = pd.read_csv(ct_path)
                     tus = pd.read_csv(tus_path)
-            else:
-                # Use filesystem directly
-                ct_path = Path(f"outputs/{job_id}/CT_Analysis_Output.csv")
-                tus_path = Path(f"outputs/{job_id}/TUS_Analysis_Output.csv")
-                ct = pd.read_csv(ct_path)
-                tus = pd.read_csv(tus_path)
+                else:
+                    raise ValueError(f"Could not find CT/TUS files in any expected location")
         
         # Prepare data for visualization
         ct_melt = prepare_data(ct, "CT")
