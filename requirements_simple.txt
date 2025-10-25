@@ -1,0 +1,7 @@
+Flask==3.1.2
+pandas==2.3.3
+numpy==2.3.4
+plotly==6.3.1
+openpyxl==3.1.5
+supabase==2.3.4
+gunicorn==23.0.0
